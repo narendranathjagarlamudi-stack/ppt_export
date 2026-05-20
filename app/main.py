@@ -1,5 +1,3 @@
-# app/main.py
-
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -12,10 +10,18 @@ from sqlalchemy.orm import Session
 
 from pydantic import BaseModel
 
-from app.database.postgres_conn import get_db
+from typing import List
+
+from app.database.postgres_conn import (
+    get_db
+)
+
+from app.database.snowflake_conn import (
+    get_snowflake_connection
+)
 
 from app.services.history_service import (
-    fetch_chat_context
+    fetch_chat_contexts
 )
 
 from app.services.presentation_service import (
@@ -27,125 +33,120 @@ from app.services.ppt_service import (
 )
 
 
-# ============================================
-# FASTAPI APP
-# ============================================
-
 app = FastAPI(
     title="PPT Export Service"
 )
 
 
-# ============================================
-# ROOT ENDPOINT
-# ============================================
-
 @app.get("/")
 async def root():
 
     return {
-        "message": "PPT Export Service Running"
+        "message":
+            "PPT Export Service Running"
     }
 
 
-# ============================================
-# REQUEST MODEL
-# ============================================
-
 class PPTExportRequest(BaseModel):
+
+    dih_ids: List[int]
 
     include_charts: bool = True
 
 
-# ============================================
-# EXPORT PPT ENDPOINT
-# ============================================
-
-@app.post("/export/ppt/{dcs_id}/{dih_id}")
+@app.post("/export/ppt/{dcs_id}")
 async def export_ppt(
+
     dcs_id: int,
-    dih_id: int,
+
     req: PPTExportRequest,
+
     db: Session = Depends(get_db),
 ):
+
+    conn = None
 
     try:
 
         # ============================================
-        # STEP 1: FETCH CHAT CONTEXT
+        # FETCH CHAT CONTEXTS
         # ============================================
 
-        chat_context = fetch_chat_context(
+        chat_contexts = fetch_chat_contexts(
+
             db=db,
+
             dcs_id=dcs_id,
-            dih_id=dih_id
+
+            dih_ids=req.dih_ids
         )
 
-        if not chat_context:
+        if not chat_contexts:
 
             raise HTTPException(
                 status_code=404,
-                detail="Chat history not found"
+                detail="No chat history found"
             )
 
         # ============================================
-        # STEP 2: GENERATE PPT CONTENT
+        # SINGLE SNOWFLAKE CONNECTION
         # ============================================
 
-        presentation_json = (
-            await generate_presentation_content(
-                agent_id=chat_context.get(
-                    "agent_id"
-                ),
+        conn = get_snowflake_connection()
 
-                thread_id=chat_context.get(
-                    "thread_id"
-                ),
+        slides = []
 
-                original_query=chat_context.get(
-                    "query",
-                    ""
-                ),
+        # ============================================
+        # GENERATE SLIDES
+        # ============================================
 
-                original_response=chat_context.get(
-                    "response",
-                    {}
-                ),
-            )
-        )
+        for ctx in chat_contexts:
 
-        if not presentation_json:
+            slide_json = (
+                await generate_presentation_content(
 
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Failed to generate "
-                    "presentation content"
+                    conn=conn,
+
+                    original_query=ctx.get(
+                        "query",
+                        ""
+                    ),
+
+                    original_response=ctx.get(
+                        "response",
+                        {}
+                    ),
                 )
             )
 
-        # ============================================
-        # DEBUG LOGS
-        # ============================================
-
-        print("\n========== PRESENTATION JSON ==========")
-        print(presentation_json)
-        print("=======================================\n")
+            slides.append(slide_json)
 
         # ============================================
-        # STEP 3: GENERATE PPTX
+        # FINAL JSON
+        # ============================================
+
+        presentation_json = {
+
+            "presentation_title":
+                "Analysis Summary",
+
+            "slides":
+                slides
+        }
+
+        # ============================================
+        # GENERATE PPT
         # ============================================
 
         ppt_path = generate_pptx(
+
             presentation_json=presentation_json,
+
             include_charts=req.include_charts
         )
 
-        # ============================================
-        # STEP 4: RETURN PPT FILE
-        # ============================================
-
         return FileResponse(
+
             path=ppt_path,
 
             media_type=(
@@ -154,9 +155,7 @@ async def export_ppt(
                 "presentation"
             ),
 
-            filename=(
-                f"analysis_{dih_id}.pptx"
-            )
+            filename="analysis_export.pptx"
         )
 
     except HTTPException:
@@ -169,3 +168,9 @@ async def export_ppt(
             status_code=500,
             detail=str(e)
         )
+
+    finally:
+
+        if conn:
+
+            conn.close()

@@ -1,28 +1,19 @@
-# app/services/presentation_service.py
-
 import json
+import re
 
-from app.services.cortex_service import ask_cortex
+from app.services.cortex_service import (
+    ask_cortex
+)
 
 
 async def generate_presentation_content(
-    agent_id: str,
-    thread_id: str,
+
+    conn,
+
     original_query: str,
+
     original_response: dict,
 ):
-    """
-    Generates executive-style PPT content.
-
-    OUTPUT:
-    - Single slide
-    - Concise bullets
-    - Reuses original chart_spec
-    """
-
-    # ============================================
-    # EXTRACT RESPONSE
-    # ============================================
 
     final_text = original_response.get(
         "final_text",
@@ -34,11 +25,8 @@ async def generate_presentation_content(
     )
 
     if not final_text:
-        final_text = str(original_response)
 
-    # ============================================
-    # STRICT PROMPT
-    # ============================================
+        final_text = str(original_response)
 
     prompt = f"""
 You are an enterprise presentation expert.
@@ -48,22 +36,17 @@ Convert the analysis into ONE executive presentation slide.
 
 STRICT RULES:
 - Maximum 4 bullets
-- Maximum 10-12 words per bullet
-- No long sentences
+- Maximum 10 words per bullet
 - No paragraphs
-- Concise executive wording only
-- Return VALID JSON ONLY
+- Business wording only
+
+CRITICAL:
+- Return ONLY raw JSON
 - No markdown
-- No explanations
-- Create EXACTLY ONE slide
-- Maximum 4 bullets
-- Each bullet MAX 12 words
-- Bullets MUST be concise
-- No paragraphs
-- No long sentences
-- Business-friendly wording only
-- Rewrite professionally
-- Do NOT copy raw analysis directly
+- No explanation
+- No intro text
+- Response must start with {{
+- Response must end with }}
 
 USER QUERY:
 {original_query}
@@ -88,19 +71,16 @@ OUTPUT FORMAT:
 }}
 """
 
-    # ============================================
-    # CALL CORTEX
-    # ============================================
-
     result = await ask_cortex(
+        conn=conn,
         message=prompt
     )
 
-    # ============================================
-    # PARSE
-    # ============================================
-
     try:
+
+        print("\n========== RAW RESULT ==========")
+        print(result)
+        print("================================\n")
 
         cleaned = (
             result
@@ -109,30 +89,62 @@ OUTPUT FORMAT:
             .strip()
         )
 
-        parsed = json.loads(cleaned)
+        # ============================================
+        # EXTRACT JSON OBJECT
+        # ============================================
 
-        slide = parsed.get("slide", {})
+        match = re.search(
+            r"\{.*\}",
+            cleaned,
+            re.DOTALL
+        )
 
-        bullets = slide.get("bullets", [])
+        if not match:
 
-        # safety cleanup
+            raise Exception(
+                "No JSON object found"
+            )
+
+        json_text = match.group(0)
+
+        print("\n========== EXTRACTED JSON ==========")
+        print(json_text)
+        print("====================================\n")
+
+        parsed = json.loads(json_text)
+
+        slide = parsed.get(
+            "slide",
+            {}
+        )
+
+        bullets = slide.get(
+            "bullets",
+            []
+        )
+
         cleaned_bullets = []
 
         for bullet in bullets:
 
-            if bullet and isinstance(bullet, str):
+            if (
+                bullet
+                and isinstance(bullet, str)
+            ):
 
                 cleaned_bullets.append(
                     bullet.strip()
                 )
 
         return {
+
             "presentation_title": parsed.get(
                 "presentation_title",
                 "Analysis Summary"
             ),
 
             "slide": {
+
                 "title": slide.get(
                     "title",
                     "Key Insights"
@@ -144,22 +156,26 @@ OUTPUT FORMAT:
             "chart_spec": chart_spec
         }
 
-    except Exception:
+    except Exception as e:
 
-        # ============================================
-        # FALLBACK
-        # ============================================
+        print("\n========== PPT FALLBACK ==========")
+        print(str(e))
+        print("==================================\n")
 
         return {
-            "presentation_title": "Analysis Summary",
+
+            "presentation_title":
+                "Analysis Summary",
 
             "slide": {
-                "title": "Key Insights",
+
+                "title":
+                    "Key Insights",
 
                 "bullets": [
                     "Analysis generated successfully",
                     "Key findings summarized",
-                    "See visualization for trends"
+                    "See chart for insights"
                 ]
             },
 

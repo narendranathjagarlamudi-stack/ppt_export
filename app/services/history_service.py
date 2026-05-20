@@ -2,28 +2,14 @@
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from typing import Optional, Dict, Any
+from typing import List, Dict, Any
 
 
-def fetch_chat_context(
+def fetch_chat_contexts(
     db: Session,
-    dih_id: int,
     dcs_id: int,
-) -> Optional[Dict[str, Any]]:
-    """
-    Fetch complete chat context required for PPT export.
-
-    Returns:
-    {
-        "dih_id": int,
-        "dcs_id": int,
-        "query": str,
-        "response": dict,
-        "message_id": int,
-        "thread_id": str,
-        "agent_id": str
-    }
-    """
+    dih_ids: List[int],
+) -> List[Dict[str, Any]]:
 
     query = text("""
         SELECT
@@ -37,24 +23,31 @@ def fetch_chat_context(
         FROM "V2".di_chat_history h
         JOIN "V2".di_chat_session s
             ON h.dcs_id = s.dcs_id
-        WHERE h.dih_id = :dih_id AND h.dcs_id = :dcs_id
-        LIMIT 1
+        WHERE h.dcs_id = :dcs_id
+        AND h.dih_id = ANY(:dih_ids)
+        ORDER BY h.created_on
     """)
 
-    result = db.execute(
+    results = db.execute(
         query,
-        {"dih_id": dih_id, "dcs_id": dcs_id}
-    ).mappings().first()
+        {
+            "dcs_id": dcs_id,
+            "dih_ids": dih_ids
+        }
+    ).mappings().all()
 
-    if not result:
-        return None
+    output = []
 
-    return {
-        "dih_id": result["dih_id"],
-        "dcs_id": result["dcs_id"],
-        "query": result["query"],
-        "response": result["response"],
-        "message_id": result["message_id"],
-        "thread_id": result["thread_id"],
-        "agent_id": result["agent_id"],
-    }
+    for result in results:
+
+        output.append({
+            "dih_id": result["dih_id"],
+            "dcs_id": result["dcs_id"],
+            "query": result["query"],
+            "response": result["response"],
+            "message_id": result["message_id"],
+            "thread_id": result["thread_id"],
+            "agent_id": result["agent_id"],
+        })
+
+    return output

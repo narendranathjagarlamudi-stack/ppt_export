@@ -41,17 +41,20 @@ def extract_chart_data(chart_spec):
     ):
 
         return {
-            "type": chart_spec.get(
+
+            "chart_type": chart_spec.get(
                 "type",
                 "bar"
             ),
+
+            "orientation": "vertical",
 
             "title": chart_spec.get(
                 "title",
                 "Chart"
             ),
 
-            "labels": chart_spec["labels"],
+            "categories": chart_spec["labels"],
 
             "values": chart_spec["values"],
         }
@@ -67,7 +70,6 @@ def extract_chart_data(chart_spec):
             "bar"
         )
 
-        # mark can sometimes be object
         if isinstance(mark, dict):
 
             mark = mark.get(
@@ -86,51 +88,55 @@ def extract_chart_data(chart_spec):
             {}
         )
 
-        labels = []
+        x_encoding = encoding.get(
+            "x",
+            {}
+        )
+
+        y_encoding = encoding.get(
+            "y",
+            {}
+        )
+
+        x_field = x_encoding.get(
+            "field"
+        )
+
+        y_field = y_encoding.get(
+            "field"
+        )
+
+        x_type = x_encoding.get(
+            "type"
+        )
+
+        y_type = y_encoding.get(
+            "type"
+        )
+
+        categories = []
         values = []
 
-        dimension_field = None
-        measure_field = None
-
         # ============================================
-        # FIND DIMENSION + MEASURE
+        # DETERMINE ORIENTATION
         # ============================================
 
-        for channel in encoding.values():
+        if (
+            x_type == "quantitative"
+            and y_type == "nominal"
+        ):
 
-            if not isinstance(channel, dict):
-                continue
+            orientation = "horizontal"
 
-            field = channel.get("field")
+            category_field = y_field
+            value_field = x_field
 
-            field_type = channel.get("type")
+        else:
 
-            if not field:
-                continue
+            orientation = "vertical"
 
-            # categorical
-            if (
-                field_type == "nominal"
-                and dimension_field is None
-            ):
-
-                dimension_field = field
-
-            # numeric
-            elif (
-                field_type == "quantitative"
-                and measure_field is None
-            ):
-
-                measure_field = field
-
-        # ============================================
-        # FALLBACK
-        # ============================================
-
-        if not dimension_field or not measure_field:
-
-            return None
+            category_field = x_field
+            value_field = y_field
 
         # ============================================
         # EXTRACT VALUES
@@ -138,33 +144,41 @@ def extract_chart_data(chart_spec):
 
         for row in data_values:
 
-            labels.append(
+            categories.append(
                 str(
                     row.get(
-                        dimension_field
+                        category_field
                     )
                 )
             )
 
-            values.append(
-                float(
-                    row.get(
-                        measure_field,
-                        0
+            try:
+
+                values.append(
+                    float(
+                        row.get(
+                            value_field,
+                            0
+                        )
                     )
                 )
-            )
+
+            except Exception:
+
+                values.append(0)
 
         return {
 
-            "type": mark,
+            "chart_type": mark,
+
+            "orientation": orientation,
 
             "title": chart_spec.get(
                 "title",
                 "Chart"
             ),
 
-            "labels": labels,
+            "categories": categories,
 
             "values": values,
         }
@@ -178,15 +192,50 @@ def extract_chart_data(chart_spec):
 
         return None
 
-def get_chart_type(chart_type):
+
+# ============================================
+# CHART TYPE
+# ============================================
+
+def get_chart_type(parsed_chart):
+
+    chart_type = parsed_chart.get(
+        "chart_type",
+        "bar"
+    )
+
+    orientation = parsed_chart.get(
+        "orientation",
+        "vertical"
+    )
+
+    # ============================================
+    # LINE
+    # ============================================
 
     if chart_type == "line":
 
         return XL_CHART_TYPE.LINE
 
-    elif chart_type == "pie":
+    # ============================================
+    # PIE / DONUT
+    # ============================================
+
+    if chart_type in ["pie", "arc"]:
 
         return XL_CHART_TYPE.PIE
+
+    # ============================================
+    # HORIZONTAL BAR
+    # ============================================
+
+    if orientation == "horizontal":
+
+        return XL_CHART_TYPE.BAR_CLUSTERED
+
+    # ============================================
+    # VERTICAL BAR
+    # ============================================
 
     return XL_CHART_TYPE.COLUMN_CLUSTERED
 
@@ -224,144 +273,131 @@ def generate_pptx(
     )
 
     # ============================================
-    # MAIN INSIGHT SLIDE
+    # LOOP THROUGH SLIDES
     # ============================================
 
-    slide_data = presentation_json.get(
-        "slide",
-        {}
-    )
-
-    slide_layout = prs.slide_layouts[6]
-
-    slide = prs.slides.add_slide(
-        slide_layout
-    )
-
-    # ============================================
-    # SLIDE TITLE
-    # ============================================
-
-    title_box = slide.shapes.add_textbox(
-        Inches(0.5),
-        Inches(0.3),
-        Inches(9),
-        Inches(0.6)
-    )
-
-    title_tf = title_box.text_frame
-
-    title_tf.text = slide_data.get(
-        "title",
-        "Key Insights"
-    )
-
-    title_tf.paragraphs[0].font.size = Pt(24)
-
-    # ============================================
-    # BULLETS LEFT SIDE
-    # ============================================
-
-    body_box = slide.shapes.add_textbox(
-        Inches(0.5),
-        Inches(1.2),
-
-        # reduced width to prevent overlap
-        Inches(3.6),
-
-        Inches(4.5)
-    )
-
-    tf = body_box.text_frame
-
-    tf.clear()
-
-    # IMPORTANT
-    # prevents overflow without expensive autosizing
-    text_frame = body_box.text_frame
-    text_frame.word_wrap = True
-
-    # ============================================
-    # BULLETS
-    # ============================================
-
-    bullets = slide_data.get(
-        "bullets",
+    for slide_data in presentation_json.get(
+        "slides",
         []
-    )
+    ):
 
-    for idx, bullet in enumerate(bullets):
+        slide_layout = prs.slide_layouts[6]
 
-        if idx == 0:
-
-            p = tf.paragraphs[0]
-
-        else:
-
-            p = tf.add_paragraph()
-
-        # Manual bullet symbol
-        p.text = f"• {bullet}"
-
-        p.level = 0
-
-        p.font.size = Pt(16)
-
-        p.space_after = Pt(10)
-
-    # ============================================
-    # CHART RIGHT SIDE
-    # ============================================
-
-    if include_charts:
-
-        parsed_chart = extract_chart_data(
-            presentation_json.get(
-                "chart_spec"
-            )
+        slide = prs.slides.add_slide(
+            slide_layout
         )
 
-        if parsed_chart:
+        # ============================================
+        # TITLE
+        # ============================================
 
-            chart_data = CategoryChartData()
+        title_box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(0.3),
+            Inches(9),
+            Inches(0.6)
+        )
 
-            chart_data.categories = (
-                parsed_chart["labels"]
-            )
+        title_tf = title_box.text_frame
 
-            chart_data.add_series(
-                "Series 1",
-                parsed_chart["values"]
-            )
+        title_tf.text = slide_data["slide"].get(
+            "title",
+            "Key Insights"
+        )
 
-            chart = slide.shapes.add_chart(
-                get_chart_type(
-                    parsed_chart["type"]
-                ),
+        title_tf.paragraphs[0].font.size = Pt(24)
 
-                # moved chart further right
-                Inches(4.4),
+        # ============================================
+        # BULLETS
+        # ============================================
 
-                Inches(1.3),
+        body_box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(1.2),
+            Inches(3.6),
+            Inches(4.8)
+        )
 
-                # slightly smaller chart
-                Inches(4.8),
+        tf = body_box.text_frame
 
-                Inches(3.8),
+        tf.clear()
 
-                chart_data
-            ).chart
+        tf.word_wrap = True
 
-            chart.has_legend = False
+        bullets = slide_data["slide"].get(
+            "bullets",
+            []
+        )
 
-            chart.has_title = True
+        for idx, bullet in enumerate(bullets):
 
-            chart.chart_title.text_frame.text = (
-                parsed_chart.get(
-                    "title",
-                    "Chart"
+            if idx == 0:
+
+                p = tf.paragraphs[0]
+
+            else:
+
+                p = tf.add_paragraph()
+
+            p.text = f"• {bullet}"
+
+            p.font.size = Pt(16)
+
+            p.space_after = Pt(10)
+
+        # ============================================
+        # CHART
+        # ============================================
+
+        if include_charts:
+
+            parsed_chart = extract_chart_data(
+                slide_data.get(
+                    "chart_spec"
                 )
             )
+
+            if parsed_chart:
+
+                chart_data = CategoryChartData()
+
+                chart_data.categories = (
+                    parsed_chart["categories"]
+                )
+
+                chart_data.add_series(
+                    "Series 1",
+                    parsed_chart["values"]
+                )
+
+                chart = slide.shapes.add_chart(
+
+                    get_chart_type(
+                        parsed_chart
+                    ),
+
+                    Inches(4.4),
+
+                    Inches(1.3),
+
+                    Inches(4.8),
+
+                    Inches(3.8),
+
+                    chart_data
+
+                ).chart
+
+                chart.has_title = True
+
+                chart.chart_title.text_frame.text = (
+                    parsed_chart.get(
+                        "title",
+                        "Chart"
+                    )
+                )
+
+                chart.has_legend = False
 
     # ============================================
     # SAVE

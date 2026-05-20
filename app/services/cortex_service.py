@@ -1,55 +1,15 @@
-# app/services/cortex_service.py
-
 import json
-import snowflake.connector
-
-from app.database.snowflake_conn import (
-    get_snowflake_connection
-)
-
-
-SNOWFLAKE_WAREHOUSE = "ARP_WH_SIT"
 
 
 async def ask_cortex(
+    conn,
     message: str,
     model: str = "llama3-70b"
 ):
-    """
-    Stateless Cortex COMPLETE call.
-
-    Used ONLY for PPT summarization / slide generation.
-
-    Does NOT use:
-    - thread memory
-    - agent API
-    - parent_message_id
-    - Cortex Analyst tools
-
-    Input:
-        Existing final response text
-
-    Output:
-        PPT-ready concise JSON/text
-    """
-
-    conn = get_snowflake_connection()
 
     cursor = conn.cursor()
 
     try:
-
-        # ============================================
-        # SELECT WAREHOUSE
-        # ============================================
-
-        cursor.execute(
-            f"USE WAREHOUSE {SNOWFLAKE_WAREHOUSE}"
-        )
-
-        # ============================================
-        # CORTEX COMPLETE
-        # ============================================
 
         query = """
         SELECT SNOWFLAKE.CORTEX.COMPLETE(
@@ -69,19 +29,63 @@ async def ask_cortex(
         result = cursor.fetchone()
 
         if not result:
+
             raise Exception(
                 "Empty response from Cortex COMPLETE"
             )
 
         response = result[0]
 
-        # Some Cortex responses may already
-        # be plain strings
+        # ============================================
+        # DEBUG
+        # ============================================
+
+        print("\n========== RAW CORTEX ==========")
+        print(response)
+        print("================================\n")
+
+        # ============================================
+        # STRING RESPONSE
+        # ============================================
 
         if isinstance(response, str):
+
             return response
 
-        return json.dumps(response)
+        # ============================================
+        # DICT RESPONSE
+        # ============================================
+
+        if isinstance(response, dict):
+
+            # New Cortex format
+            if "choices" in response:
+
+                choices = response.get(
+                    "choices",
+                    []
+                )
+
+                if choices:
+
+                    first = choices[0]
+
+                    # Sometimes:
+                    # {"messages":"..."}
+
+                    if isinstance(first, dict):
+
+                        if "messages" in first:
+
+                            return first["messages"]
+
+                        if "message" in first:
+
+                            return first["message"]
+
+            return json.dumps(response)
+
+        return str(response)
 
     except Exception as e:
 
@@ -92,4 +96,3 @@ async def ask_cortex(
     finally:
 
         cursor.close()
-        conn.close()

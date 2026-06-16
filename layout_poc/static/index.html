@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Template Layout POC</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="layouts-panel">
+        <div class="panel-header">
+          <div>
+            <h1>Template Layouts</h1>
+            <p id="templatePath">Loading template...</p>
+            <p id="previewMode">Checking preview renderer...</p>
+          </div>
+          <button id="refreshBtn" type="button">Refresh</button>
+        </div>
+
+        <div class="layout-picker">
+          <button id="layoutDropdownBtn" class="layout-dropdown-btn" type="button">
+            <img id="selectedPreview" alt="" />
+            <span>
+              <strong id="dropdownSelectedName">Select a layout</strong>
+              <small id="dropdownSelectedMeta">Open layout gallery</small>
+            </span>
+            <b>▾</b>
+          </button>
+
+          <div id="layoutMenu" class="layout-menu" hidden>
+            <div id="layoutGrid" class="layout-grid"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="controls-panel">
+        <div class="selected-card">
+          <span class="eyebrow">Selected</span>
+          <h2 id="selectedName">None</h2>
+          <p id="selectedMeta">Pick a layout to render a sample slide.</p>
+        </div>
+
+        <label>
+          Slide title
+          <input id="titleInput" value="Sample Insights" />
+        </label>
+
+        <label>
+          Bullet points
+          <textarea id="bulletsInput" rows="5">Familiarity increased to 61%.
+Consideration is strongest in the Midwest.
+Usage is trailing awareness by 19 points.</textarea>
+        </label>
+
+        <label>
+          Chart title
+          <input id="chartTitleInput" value="Sample Chart" />
+        </label>
+
+        <div class="two-col">
+          <label>
+            Categories
+            <input id="categoriesInput" value="Familiarity, Consideration, Usage" />
+          </label>
+
+          <label>
+            Values
+            <input id="valuesInput" value="61, 42, 28" />
+          </label>
+        </div>
+
+        <label class="checkbox-row">
+          <input id="chartToggle" type="checkbox" checked />
+          Include chart
+        </label>
+
+        <section class="palette-panel">
+          <div class="palette-header">
+            <div>
+              <span class="eyebrow">Template Palette</span>
+              <p id="paletteMeta">Loading colors...</p>
+            </div>
+            <div class="palette-actions">
+              <button id="selectAllColorsBtn" type="button">All</button>
+              <button id="clearColorsBtn" type="button">None</button>
+            </div>
+          </div>
+          <div id="paletteGrid" class="palette-grid"></div>
+        </section>
+
+        <button id="renderBtn" type="button" disabled>Render PPTX</button>
+        <p id="statusText" class="status"></p>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

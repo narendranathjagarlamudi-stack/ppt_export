@@ -10,14 +10,10 @@ from sqlalchemy.orm import Session
 
 from pydantic import BaseModel
 
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from app.database.postgres_conn import (
     get_db
-)
-
-from app.database.snowflake_conn import (
-    get_snowflake_connection
 )
 
 from app.services.history_service import (
@@ -52,6 +48,10 @@ class PPTExportRequest(BaseModel):
     dih_ids: List[int]
 
     include_charts: bool = True
+
+    ppt_config: Optional[Dict[str, Any]] = None
+
+    chart_colors: Optional[Dict[str, Any]] = None
 
 
 @app.post("/export/ppt/{dcs_id}")
@@ -88,12 +88,6 @@ async def export_ppt(
                 detail="No chat history found"
             )
 
-        # ============================================
-        # SINGLE SNOWFLAKE CONNECTION
-        # ============================================
-
-        conn = get_snowflake_connection()
-
         slides = []
 
         # ============================================
@@ -119,7 +113,13 @@ async def export_ppt(
                 )
             )
 
-            slides.append(slide_json)
+            if isinstance(slide_json, list):
+
+                slides.extend(slide_json)
+
+            else:
+
+                slides.append(slide_json)
 
         # ============================================
         # FINAL JSON
@@ -142,7 +142,12 @@ async def export_ppt(
 
             presentation_json=presentation_json,
 
-            include_charts=req.include_charts
+            include_charts=req.include_charts,
+
+            ppt_config=(
+                req.ppt_config
+                or req.chart_colors
+            )
         )
 
         return FileResponse(

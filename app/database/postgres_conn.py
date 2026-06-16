@@ -44,6 +44,7 @@ def get_db():
 
 if __name__ == "__main__":
 
+    db = None
     try:
         db = SessionLocal()
 
@@ -59,4 +60,5 @@ if __name__ == "__main__":
         print(str(e))
 
     finally:
-        db.close()
+        if db:
+            db.close()

@@ -59,9 +59,12 @@ From the project root:
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+pip install -r linux_preview_requirements.txt
 ```
 
 If the project uses a different dependency file or internal package process, use that instead.
+
+`linux_preview_requirements.txt` installs `PyMuPDF`, which is used to convert LibreOffice-rendered PDF pages into PNG thumbnails.
 
 ## 4. Start the API Server
 
@@ -115,6 +118,18 @@ The response should contain layout objects with preview URLs, for example:
   ]
 }
 ```
+
+Also check these response fields:
+
+```json
+{
+  "preview_mode": "libreoffice",
+  "renderer": "/usr/bin/soffice",
+  "renderer_error": null
+}
+```
+
+If `preview_mode` is `schematic`, LibreOffice rendering did not complete and the app used fallback boxes.
 
 ## 7. Verify Thumbnail Cache Files
 
@@ -206,12 +221,14 @@ If the image does not load, check static file mounting in the FastAPI app.
 Likely cause:
 
 - LibreOffice failed.
+- `PyMuPDF` is not installed.
 - Template conversion failed.
 - Cache contains fallback images.
 
 Try:
 
 ```bash
+pip install -r linux_preview_requirements.txt
 curl "http://localhost:8000/export/layouts?refresh_cache=true"
 ```
 
@@ -222,8 +239,9 @@ Then check server logs for LibreOffice conversion errors.
 Testing is successful when:
 
 - `soffice --headless --version` works.
+- `python -c "import fitz; print(fitz.__doc__[:20])"` works.
 - `/export/layouts?refresh_cache=true` returns layout preview URLs.
+- API response has `"preview_mode": "libreoffice"`.
 - PNG files are created under `app/static/layout_picker/preview_cache`.
 - `/layout-picker` shows layout thumbnails in the dropdown.
 - Uploaded templates also generate layout previews.
-

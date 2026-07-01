@@ -521,49 +521,58 @@ def _overlay_placeholder_outlines(canvas, prs, layout):
 
 def _image_file_to_data_url(path, prs=None, layout=None):
     with Image.open(path) as image:
-        image.thumbnail(
-            (
-                PREVIEW_WIDTH,
-                PREVIEW_HEIGHT
-            )
+        return _image_to_data_url(
+            image,
+            prs,
+            layout
         )
 
-        canvas = Image.new(
-            "RGB",
-            (
-                PREVIEW_WIDTH,
-                PREVIEW_HEIGHT
-            ),
-            "#F8FAFC"
+
+def _image_to_data_url(image, prs=None, layout=None):
+    image = image.copy()
+    image.thumbnail(
+        (
+            PREVIEW_WIDTH,
+            PREVIEW_HEIGHT
+        )
+    )
+
+    canvas = Image.new(
+        "RGB",
+        (
+            PREVIEW_WIDTH,
+            PREVIEW_HEIGHT
+        ),
+        "#F8FAFC"
+    )
+
+    left = int(
+        (PREVIEW_WIDTH - image.width) / 2
+    )
+    top = int(
+        (PREVIEW_HEIGHT - image.height) / 2
+    )
+
+    canvas.paste(
+        image.convert("RGB"),
+        (
+            left,
+            top
+        )
+    )
+
+    if prs is not None and layout is not None:
+        _overlay_placeholder_outlines(
+            canvas,
+            prs,
+            layout
         )
 
-        left = int(
-            (PREVIEW_WIDTH - image.width) / 2
-        )
-        top = int(
-            (PREVIEW_HEIGHT - image.height) / 2
-        )
-
-        canvas.paste(
-            image.convert("RGB"),
-            (
-                left,
-                top
-            )
-        )
-
-        if prs is not None and layout is not None:
-            _overlay_placeholder_outlines(
-                canvas,
-                prs,
-                layout
-            )
-
-        buffer = io.BytesIO()
-        canvas.save(
-            buffer,
-            format="PNG"
-        )
+    buffer = io.BytesIO()
+    canvas.save(
+        buffer,
+        format="PNG"
+    )
 
     encoded = base64.b64encode(
         buffer.getvalue()
@@ -769,6 +778,7 @@ def _render_layout_previews_with_libreoffice(prs):
     libreoffice = _find_libreoffice()
 
     if not libreoffice:
+        LAST_RENDER_ERROR = "LibreOffice renderer failed: soffice/libreoffice command not found"
         return None
 
     deck_path = _create_layout_preview_deck(
@@ -787,7 +797,7 @@ def _render_layout_previews_with_libreoffice(prs):
                 libreoffice,
                 "--headless",
                 "--convert-to",
-                "png",
+                "pdf",
                 "--outdir",
                 str(output_dir),
                 deck_path,
@@ -798,28 +808,72 @@ def _render_layout_previews_with_libreoffice(prs):
             timeout=90,
         )
 
-        image_files = sorted(
-            list(output_dir.glob("*.png"))
-            + list(output_dir.glob("*.PNG"))
+        pdf_files = sorted(
+            list(output_dir.glob("*.pdf"))
+            + list(output_dir.glob("*.PDF"))
         )
 
-        if len(image_files) < len(prs.slide_layouts):
+        if not pdf_files:
+            LAST_RENDER_ERROR = "LibreOffice renderer failed: no PDF was produced"
             return None
 
-        previews = [
-            _image_file_to_data_url(
-                image_files[index],
+        previews = _render_pdf_pages_to_data_urls(
+            pdf_files[0],
+            prs
+        )
+
+        if len(previews) < len(prs.slide_layouts):
+            LAST_RENDER_ERROR = (
+                "LibreOffice renderer failed: rendered fewer pages "
+                f"({len(previews)}) than layouts ({len(prs.slide_layouts)})"
+            )
+            return None
+
+        return [
+            _image_to_data_url(
+                previews[index],
                 prs,
                 prs.slide_layouts[index]
             )
             for index in range(len(prs.slide_layouts))
         ]
 
-        return previews
-
     except Exception as exc:
         LAST_RENDER_ERROR = f"LibreOffice renderer failed: {type(exc).__name__}: {exc}"
         return None
+
+
+def _render_pdf_pages_to_data_urls(pdf_path, prs):
+    global LAST_RENDER_ERROR
+
+    try:
+        import fitz
+
+    except Exception as exc:
+        LAST_RENDER_ERROR = (
+            "LibreOffice renderer failed: PyMuPDF is required to convert "
+            f"PDF pages to PNG previews ({type(exc).__name__}: {exc})"
+        )
+        return []
+
+    pages = []
+
+    with fitz.open(pdf_path) as document:
+        for page in document:
+            pixmap = page.get_pixmap(
+                matrix=fitz.Matrix(2, 2),
+                alpha=False
+            )
+            image = Image.open(
+                io.BytesIO(
+                    pixmap.tobytes("png")
+                )
+            ).convert("RGB")
+            pages.append(
+                image
+            )
+
+    return pages
 
 
 def _render_layout_previews(prs):

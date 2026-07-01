@@ -790,12 +790,22 @@ def _render_layout_previews_with_libreoffice(prs):
             prefix="layout_poc_previews_"
         )
     )
+    profile_dir = Path(
+        tempfile.mkdtemp(
+            prefix="layout_poc_libreoffice_profile_"
+        )
+    )
 
     try:
         subprocess.run(
             [
                 libreoffice,
                 "--headless",
+                "--nologo",
+                "--nodefault",
+                "--nofirststartwizard",
+                "--nolockcheck",
+                f"-env:UserInstallation=file://{profile_dir}",
                 "--convert-to",
                 "pdf",
                 "--outdir",
@@ -839,7 +849,18 @@ def _render_layout_previews_with_libreoffice(prs):
         ]
 
     except Exception as exc:
-        LAST_RENDER_ERROR = f"LibreOffice renderer failed: {type(exc).__name__}: {exc}"
+        stderr = ""
+
+        if isinstance(exc, subprocess.CalledProcessError):
+            stderr = (
+                exc.stderr or b""
+            ).decode(
+                "utf-8",
+                errors="ignore"
+            ).strip()
+
+        detail = f": {stderr}" if stderr else ""
+        LAST_RENDER_ERROR = f"LibreOffice renderer failed: {type(exc).__name__}: {exc}{detail}"
         return None
 
 
@@ -1023,7 +1044,7 @@ def _layout_preview_data_url(prs, layout):
     return f"data:image/png;base64,{encoded}"
 
 
-def _layout_metadata(prs, layout, index, rendered_preview=None):
+def _layout_metadata(prs, layout, index, rendered_preview=None, preview_mode=None):
     placeholders = []
 
     for placeholder in layout.placeholders:
@@ -1054,7 +1075,7 @@ def _layout_metadata(prs, layout, index, rendered_preview=None):
             or "Body" in placeholder_kinds
         ),
         "preview": rendered_preview or _layout_preview_data_url(prs, layout),
-        "preview_mode": "rendered" if rendered_preview else "schematic",
+        "preview_mode": preview_mode if rendered_preview else "schematic",
     }
 
 
@@ -1121,7 +1142,8 @@ def get_layouts(template_path=None, force_refresh=False):
                         previews[index]
                         if previews
                         else None
-                    )
+                    ),
+                    preview_result.get("mode")
                 )
                 for index, layout in enumerate(prs.slide_layouts)
             ],

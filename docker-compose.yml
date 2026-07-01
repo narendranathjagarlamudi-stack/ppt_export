@@ -1,0 +1,14 @@
+services:
+  ppt-export:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
+    image: ppt-export-layout-preview:ubuntu-arm
+    platform: linux/arm64
+    ports:
+      - "8000:8000"
+    environment:
+      LIBREOFFICE_PATH: /usr/bin/soffice
+      POSTGRES_HOST: localhost

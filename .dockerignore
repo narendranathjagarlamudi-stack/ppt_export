@@ -1,0 +1,11 @@
+.git
+.agents
+.codex
+venv
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+output
+*.zip
+app/static/layout_picker/preview_cache/*.json

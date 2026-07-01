@@ -142,20 +142,24 @@ python -m pip install --upgrade pip
 For this POC's Linux preview path, install the runtime dependencies:
 
 ```bash
-pip install \
-  fastapi==0.115.6 \
-  "uvicorn[standard]==0.34.0" \
-  python-pptx==1.0.2 \
-  Pillow==11.1.0 \
-  PyMuPDF==1.25.1 \
-  SQLAlchemy==2.0.36 \
-  psycopg2-binary==2.9.10 \
-  pydantic==2.10.4
+pip install -r requirements.txt
 ```
 
-`PyMuPDF` provides the `fitz` package, which converts LibreOffice-rendered PDF pages into PNG thumbnails.
+The `requirements.txt` file is plain text that works on Windows and Linux. It uses pip environment markers for OS-specific packages. For example, `PyMuPDF` is installed only on Linux because it provides the `fitz` package used to convert LibreOffice-rendered PDF pages into PNG thumbnails.
 
-If you choose to use the full `requirements.txt`, first verify it is plain UTF-8 text. In this POC snapshot it may be UTF-16, which can confuse `pip` on Linux. The safer preview-focused install is the command above.
+You can verify the file encoding with:
+
+```bash
+file requirements.txt
+```
+
+Expected:
+
+```text
+requirements.txt: ASCII text
+```
+
+`ASCII text` is valid UTF-8. The important part is that it should not report `UTF-16`.
 
 Verify the important Python imports:
 

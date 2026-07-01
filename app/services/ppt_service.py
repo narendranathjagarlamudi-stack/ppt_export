@@ -43,9 +43,9 @@ PPTX_CONTENT_TYPE = (
 )
 
 
-def _load_base_presentation():
+def _load_base_presentation(template_path=TEMPLATE_PATH):
 
-    if not TEMPLATE_PATH.exists():
+    if not template_path.exists():
         return Presentation()
 
     converted = tempfile.NamedTemporaryFile(
@@ -56,7 +56,7 @@ def _load_base_presentation():
     converted.close()
 
     with zipfile.ZipFile(
-        TEMPLATE_PATH,
+        template_path,
         "r"
     ) as source:
 
@@ -164,6 +164,47 @@ def _set_title_slide_text(
         box.text_frame.paragraphs[0].font.size = Pt(16)
 
 
+def _remove_unused_content_placeholders(slide):
+
+    removable_type_names = [
+        "TITLE",
+        "CENTER_TITLE",
+        "SUBTITLE",
+        "BODY",
+        "OBJECT",
+        "PICTURE",
+        "CHART",
+        "TABLE",
+        "MEDIA_CLIP",
+    ]
+    removable_types = {
+        getattr(PP_PLACEHOLDER, name)
+        for name in removable_type_names
+        if hasattr(PP_PLACEHOLDER, name)
+    }
+
+    for shape in list(slide.shapes):
+
+        if not getattr(shape, "is_placeholder", False):
+            continue
+
+        try:
+            placeholder_type = shape.placeholder_format.type
+
+        except Exception:
+            continue
+
+        if placeholder_type not in removable_types:
+            continue
+
+        try:
+            element = shape._element
+            element.getparent().remove(element)
+
+        except Exception:
+            continue
+
+
 def _find_slide_layout(
     prs,
     preferred_names,
@@ -200,6 +241,50 @@ def _find_slide_layout(
     ]
 
 
+def _select_slide_layout(
+    prs,
+    requested_layout,
+    fallback_names,
+    fallback_index
+):
+
+    if requested_layout is None:
+
+        return _find_slide_layout(
+            prs,
+            fallback_names,
+            fallback_index
+        )
+
+    if isinstance(requested_layout, int):
+
+        if 0 <= requested_layout < len(prs.slide_layouts):
+            return prs.slide_layouts[requested_layout]
+
+    if isinstance(requested_layout, str):
+
+        requested = requested_layout.strip()
+
+        if requested.isdigit():
+
+            index = int(requested)
+
+            if 0 <= index < len(prs.slide_layouts):
+                return prs.slide_layouts[index]
+
+        return _find_slide_layout(
+            prs,
+            [requested] + fallback_names,
+            fallback_index
+        )
+
+    return _find_slide_layout(
+        prs,
+        fallback_names,
+        fallback_index
+    )
+
+
 def _merge_ppt_config(base_config, override_config):
 
     if not isinstance(override_config, dict):
@@ -212,7 +297,12 @@ def _merge_ppt_config(base_config, override_config):
     )
 
     if isinstance(palette, list) and palette:
-        merged_config["palette"] = palette
+        cleaned_palette = _clean_palette_colors(
+            palette
+        )
+
+        if cleaned_palette:
+            merged_config["palette"] = cleaned_palette
 
     for key in (
         "title",
@@ -255,7 +345,7 @@ def _merge_ppt_config(base_config, override_config):
     return merged_config
 
 
-def _load_ppt_config(override_config=None):
+def _load_ppt_config(override_config=None, config_path=PPT_CONFIG_PATH):
 
     default_config = {
         "palette": [
@@ -292,7 +382,7 @@ def _load_ppt_config(override_config=None):
         },
     }
 
-    if not PPT_CONFIG_PATH.exists():
+    if not config_path.exists():
         return _merge_ppt_config(
             default_config,
             override_config
@@ -300,7 +390,7 @@ def _load_ppt_config(override_config=None):
 
     try:
 
-        with PPT_CONFIG_PATH.open(
+        with config_path.open(
             "r",
             encoding="utf-8"
         ) as file:
@@ -354,6 +444,39 @@ def _clean_hex_color(value):
     return color.upper()
 
 
+def _is_black_or_white(color):
+
+    return color in {
+        "000000",
+        "FFFFFF",
+    }
+
+
+def _clean_palette_colors(colors):
+
+    cleaned_colors = []
+
+    for color in colors or []:
+
+        cleaned = _clean_hex_color(
+            color
+        )
+
+        if not cleaned:
+            continue
+
+        if _is_black_or_white(
+            cleaned
+        ):
+            continue
+
+        cleaned_colors.append(
+            cleaned
+        )
+
+    return cleaned_colors
+
+
 def _color_lookup(mapping, key):
 
     normalized_key = _normalize_color_key(key)
@@ -368,17 +491,17 @@ def _color_lookup(mapping, key):
 
 def _palette_color(config, index):
 
-    palette = config.get(
-        "palette",
-        []
+    palette = _clean_palette_colors(
+        config.get(
+            "palette",
+            []
+        )
     )
 
     if not palette:
         return None
 
-    return _clean_hex_color(
-        palette[index % len(palette)]
-    )
+    return palette[index % len(palette)]
 
 
 def _apply_fill_color(target, hex_color):
@@ -676,6 +799,39 @@ def _apply_chart_colors(
         )
 
 
+def _apply_selected_chart_colors(chart, selected_colors):
+
+    colors = _clean_palette_colors(
+        selected_colors
+    )
+
+    if not colors:
+        return
+
+    try:
+
+        if len(chart.series) > 1:
+
+            for idx, series in enumerate(chart.series):
+                _apply_fill_color(
+                    series,
+                    colors[idx % len(colors)]
+                )
+
+            return
+
+        if chart.series:
+
+            for idx, point in enumerate(chart.series[0].points):
+                _apply_fill_color(
+                    point,
+                    colors[idx % len(colors)]
+                )
+
+    except Exception:
+        return
+
+
 def _chart_complexity(parsed_chart):
 
     if not parsed_chart:
@@ -747,8 +903,12 @@ def _content_layout(
         body_width = 2.15
     elif bullet_count == 2:
         body_width = 2.55
-    else:
+    elif bullet_count <= 4:
         body_width = 2.95
+    elif bullet_count <= 8:
+        body_width = 3.35
+    else:
+        body_width = 3.75
 
     if complexity >= 40:
         body_width = max(
@@ -781,8 +941,12 @@ def _content_layout(
 
     if bullet_count <= 1:
         body_font = 13
-    elif bullet_count >= 3:
+    elif bullet_count <= 4:
         body_font = 11
+    elif bullet_count <= 8:
+        body_font = 9.5
+    else:
+        body_font = 8.5
 
     return {
         "title": (
@@ -805,6 +969,110 @@ def _content_layout(
         ),
         "body_font": body_font,
     }
+
+
+def _space_after_for_bullets(bullet_count):
+
+    if bullet_count > 8:
+        return 2
+
+    if bullet_count > 4:
+        return 4
+
+    return 7
+
+
+def _estimate_bullet_lines(
+    bullet,
+    body_width,
+    font_size
+):
+
+    chars_per_line = max(
+        18,
+        int(body_width * (170 / max(font_size, 7)))
+    )
+
+    return max(
+        1,
+        int((len(str(bullet)) + chars_per_line - 1) / chars_per_line)
+    )
+
+
+def _fit_bullets_to_body(
+    bullets,
+    body_width,
+    body_height,
+    preferred_font_size
+):
+
+    if not bullets:
+        return [], preferred_font_size, 0
+
+    font_candidates = [
+        preferred_font_size,
+        min(preferred_font_size, 9.5),
+        8.5,
+        7.8,
+    ]
+
+    seen_sizes = []
+
+    for size in font_candidates:
+
+        if size not in seen_sizes:
+            seen_sizes.append(size)
+
+    for font_size in seen_sizes:
+
+        fitted = []
+        used_height = 0
+        space_after = _space_after_for_bullets(
+            len(bullets)
+        )
+
+        line_height = (
+            font_size / 72
+        ) * 1.18
+
+        paragraph_gap = space_after / 72
+        usable_height = max(
+            body_height - 0.12,
+            0.5
+        )
+
+        for bullet in bullets:
+
+            line_count = _estimate_bullet_lines(
+                bullet,
+                body_width,
+                font_size
+            )
+
+            bullet_height = (
+                line_count * line_height
+                + paragraph_gap
+            )
+
+            if (
+                fitted
+                and used_height + bullet_height > usable_height
+            ):
+                break
+
+            if bullet_height > usable_height and not fitted:
+                fitted.append(bullet)
+                break
+
+            fitted.append(bullet)
+            used_height += bullet_height
+
+        if len(fitted) == len(bullets):
+            return fitted, font_size, space_after
+
+    return fitted, seen_sizes[-1], _space_after_for_bullets(
+        len(fitted)
+    )
 
 
 # ============================================
@@ -1305,15 +1573,68 @@ def get_chart_type(parsed_chart):
 # PPT GENERATOR
 # ============================================
 
-def generate_pptx(
+class PPTXGenerator:
+
+    def __init__(
+        self,
+        template_path=TEMPLATE_PATH,
+        config_path=PPT_CONFIG_PATH
+    ):
+
+        self.template_path = Path(
+            template_path
+        )
+        self.config_path = Path(
+            config_path
+        )
+
+    def generate(
+        self,
+        presentation_json: dict,
+        include_charts: bool = True,
+        ppt_config=None,
+        selected_colors=None
+    ):
+
+        return _generate_pptx(
+            presentation_json=presentation_json,
+            include_charts=include_charts,
+            ppt_config=ppt_config,
+            selected_colors=selected_colors,
+            template_path=self.template_path,
+            config_path=self.config_path
+        )
+
+    def generate_pptx(
+        self,
+        presentation_json: dict,
+        include_charts: bool = True,
+        ppt_config=None,
+        selected_colors=None
+    ):
+
+        return self.generate(
+            presentation_json=presentation_json,
+            include_charts=include_charts,
+            ppt_config=ppt_config,
+            selected_colors=selected_colors
+        )
+
+
+def _generate_pptx(
     presentation_json: dict,
     include_charts: bool = True,
-    ppt_config=None
+    ppt_config=None,
+    selected_colors=None,
+    template_path=TEMPLATE_PATH,
+    config_path=PPT_CONFIG_PATH
 ):
 
-    template_available = TEMPLATE_PATH.exists()
+    template_available = template_path.exists()
 
-    prs = _load_base_presentation()
+    prs = _load_base_presentation(
+        template_path
+    )
 
     if not template_available:
         prs.slide_width = Inches(13.333)
@@ -1335,7 +1656,8 @@ def generate_pptx(
     if not template_available:
 
         fallback_config = _load_ppt_config(
-            ppt_config
+            ppt_config,
+            config_path
         )
 
     title = presentation_json.get(
@@ -1399,10 +1721,14 @@ def generate_pptx(
         []
     ):
 
-        slide_layout = _find_slide_layout(
+        slide_layout = _select_slide_layout(
             prs,
+            slide_data.get(
+                "layout"
+            ),
             [
                 "Custom Layout",
+                "Title & Body",
                 "Blank"
             ],
             6
@@ -1410,6 +1736,10 @@ def generate_pptx(
 
         slide = prs.slides.add_slide(
             slide_layout
+        )
+
+        _remove_unused_content_placeholders(
+            slide
         )
 
         slide_number = len(prs.slides)
@@ -1487,6 +1817,15 @@ def generate_pptx(
             layout["body"]
         )
 
+        fitted_bullets, body_font_size, space_after = (
+            _fit_bullets_to_body(
+                bullets=bullets,
+                body_width=body_width,
+                body_height=body_height,
+                preferred_font_size=layout["body_font"]
+            )
+        )
+
         body_box = slide.shapes.add_textbox(
             Inches(body_left),
             Inches(body_top),
@@ -1499,8 +1838,12 @@ def generate_pptx(
         tf.clear()
 
         tf.word_wrap = True
+        tf.margin_left = Inches(0.03)
+        tf.margin_right = Inches(0.03)
+        tf.margin_top = Inches(0.03)
+        tf.margin_bottom = Inches(0.03)
 
-        for idx, bullet in enumerate(bullets):
+        for idx, bullet in enumerate(fitted_bullets):
 
             if idx == 0:
 
@@ -1513,10 +1856,10 @@ def generate_pptx(
             p.text = f"- {bullet}"
 
             p.font.size = Pt(
-                layout["body_font"]
+                body_font_size
             )
 
-            p.space_after = Pt(7)
+            p.space_after = Pt(space_after)
 
             if fallback_config:
 
@@ -1606,6 +1949,11 @@ def generate_pptx(
                         ppt_config=fallback_config
                     )
 
+                _apply_selected_chart_colors(
+                    chart,
+                    selected_colors
+                )
+
                 if chart.has_legend:
 
                     chart.legend.position = (
@@ -1641,3 +1989,18 @@ def generate_pptx(
     prs.save(temp_file.name)
 
     return temp_file.name
+
+
+def generate_pptx(
+    presentation_json: dict,
+    include_charts: bool = True,
+    ppt_config=None,
+    selected_colors=None
+):
+
+    return PPTXGenerator().generate(
+        presentation_json=presentation_json,
+        include_charts=include_charts,
+        ppt_config=ppt_config,
+        selected_colors=selected_colors
+    )

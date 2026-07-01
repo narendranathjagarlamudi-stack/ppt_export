@@ -1,5 +1,6 @@
 import json
 
+
 from app.services.Heuristic_extractor import (
     extract_bullets,
     extract_bullets_from_response
@@ -188,13 +189,13 @@ def _fallback_bullets():
 def _build_slide(
     title: str,
     text: str,
-    chart_spec=None
+    chart_spec=None,
+    event_metadata=None
 ):
 
     bullets = extract_bullets(
         final_text=text,
-        chart_spec=chart_spec,
-        top_n=3
+        chart_spec=chart_spec
     )
 
     if not bullets:
@@ -211,11 +212,14 @@ def _build_slide(
                 _get_chart_title(chart_spec) or title or "Key Insights",
 
             "bullets":
-                bullets[:3]
+                bullets
         },
 
         "chart_spec":
-            chart_spec
+            chart_spec,
+
+        "event_metadata":
+            event_metadata or {}
     }
 
 
@@ -282,7 +286,13 @@ def _build_slides_from_stream(
             _build_slide(
                 title=original_query,
                 text=text,
-                chart_spec=chart_spec
+                chart_spec=chart_spec,
+                event_metadata={
+                    "content_index": data.get("content_index"),
+                    "sequence_number": data.get("sequence_number"),
+                    "tool_use_id": data.get("tool_use_id"),
+                    "event_type": event_type,
+                }
             )
         )
 
@@ -337,8 +347,7 @@ def _build_single_slide_from_response(
     )
 
     bullets = extract_bullets_from_response(
-        response_data,
-        top_n=4
+        response_data
     )
 
     if not bullets:
@@ -355,7 +364,7 @@ def _build_single_slide_from_response(
                 _get_chart_title(chart_spec) or original_query or "Key Insights",
 
             "bullets":
-                bullets[:4]
+                bullets
         },
 
         "chart_spec":

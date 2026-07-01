@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Template Layout POC</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section id="layoutsPanel" class="layouts-panel">
+        <div class="panel-header">
+          <div>
+            <h1>Template Layouts</h1>
+            <p id="templatePath">Loading template...</p>
+            <p id="previewMode">Checking preview renderer...</p>
+          </div>
+          <button id="refreshBtn" type="button">Refresh</button>
+        </div>
+
+        <div class="layout-picker">
+          <button id="layoutDropdownBtn" class="layout-dropdown-btn" type="button">
+            <img id="selectedPreview" alt="" />
+            <span>
+              <strong id="dropdownSelectedName">Select a layout</strong>
+              <small id="dropdownSelectedMeta">Open layout gallery</small>
+            </span>
+            <b>v</b>
+          </button>
+          <div class="template-actions">
+            <label class="file-row">
+              Upload template
+              <input id="templateUploadInput" type="file" accept=".pptx,.potx" />
+            </label>
+            <button id="refreshCacheBtn" type="button">Refresh Thumbnails</button>
+          </div>
+
+          <div id="layoutMenu" class="layout-menu" hidden>
+            <div id="layoutGrid" class="layout-grid"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="controls-panel">
+        <div id="selectedCard" class="selected-card">
+          <span class="eyebrow">Selected</span>
+          <h2 id="selectedName">None</h2>
+          <p id="selectedMeta">Pick a layout for the exported slides.</p>
+        </div>
+
+        <label class="checkbox-row">
+          <input id="chartToggle" type="checkbox" checked />
+          Include chart
+        </label>
+
+        <section class="palette-panel">
+          <div class="palette-header">
+            <div>
+              <span class="eyebrow">Template Palette</span>
+              <p id="paletteMeta">Loading colors...</p>
+            </div>
+            <div class="palette-actions">
+              <button id="defaultColorsBtn" type="button">Template Default</button>
+              <button id="selectAllColorsBtn" type="button">All</button>
+              <button id="clearColorsBtn" type="button">None</button>
+            </div>
+          </div>
+          <div id="paletteGrid" class="palette-grid"></div>
+        </section>
+
+        <section class="export-panel">
+          <span class="eyebrow">Main Export</span>
+          <p id="fallbackModeNote" class="fallback-mode-note" hidden>
+            Template is not available. Layout selection is skipped and fallback PPT config will be used.
+          </p>
+          <label>
+            DCS ID
+            <input id="dcsIdInput" placeholder="Enter dcs_id" />
+          </label>
+          <label>
+            Message / DIH IDs
+            <input id="dihIdsInput" placeholder="101, 102, 103" />
+          </label>
+          <label>
+            Multi-session Export Items JSON
+            <textarea id="exportItemsInput" rows="5" placeholder='[{"dcs_id":156,"dih_ids":[436,437]},{"dcs_id":157,"dih_ids":[501]}]'></textarea>
+          </label>
+          <label>
+            Download Filename
+            <input id="filenameInput" placeholder="analysis_export_custom.pptx" />
+          </label>
+          <label>
+            Fallback PPT Config JSON
+            <textarea id="pptConfigInput" rows="7" placeholder='{"palette":["#4C78A8","#F58518"],"header":{"text":"Analysis Export"}}'></textarea>
+          </label>
+          <label class="file-row">
+            Upload config JSON
+            <input id="configUploadInput" type="file" accept=".json,application/json" />
+          </label>
+          <button id="previewBtn" type="button" disabled>Preview Slides</button>
+          <p id="exportSummary" class="export-summary">Preview before export.</p>
+          <section class="slide-preview-panel">
+            <div class="slide-preview-header">
+              <div>
+                <span class="eyebrow">Generated Slides</span>
+                <p id="slidePreviewMeta">Preview slide count before export.</p>
+              </div>
+              <button id="applyLayoutToSlidesBtn" type="button" disabled>Apply Selected Layout</button>
+            </div>
+            <div id="slidePreviewList" class="slide-preview-list"></div>
+          </section>
+          <button id="exportBtn" type="button" disabled>Export Selected Messages</button>
+        </section>
+        <p id="statusText" class="status"></p>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

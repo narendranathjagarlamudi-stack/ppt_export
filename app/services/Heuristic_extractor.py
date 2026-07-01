@@ -237,6 +237,68 @@ def is_duplicate(candidate, existing):
     return False
 
 
+def is_worthy_text_insight(sentence: str):
+
+    lower = sentence.lower()
+
+    if re.search(r'\d+(?:\.\d+)?%', sentence):
+        return True
+
+    if re.search(r'\b\d+(?:,\d{3})*(?:\.\d+)?\b', sentence):
+
+        if any(
+            word in lower
+            for word in [
+                "record",
+                "records",
+                "respondent",
+                "respondents",
+                "count",
+                "base",
+                "total",
+                "share",
+                "volume",
+                "rank",
+                "ranks",
+                "region",
+                "country",
+                "qid",
+                "qids",
+                "pp",
+                "point",
+                "points",
+            ]
+        ):
+            return True
+
+    if any(
+        phrase in lower
+        for phrase in [
+            "highest",
+            "lowest",
+            "largest",
+            "smallest",
+            "strongest",
+            "weakest",
+            "leads",
+            "lead",
+            "ahead",
+            "behind",
+            "followed by",
+            "ranks",
+            "ranked",
+            "more than",
+            "less than",
+            "compared",
+            "versus",
+            "vs",
+        ]
+    ):
+        return True
+
+    return False
+
+
 # =====================================================
 # TEXT INSIGHTS
 # =====================================================
@@ -704,20 +766,29 @@ def generic_chart_insights(chart_spec, values):
         reverse=True
     )
 
-    top = points[0]
+    for rank, point in enumerate(points[:4], start=1):
 
-    top_context = (
-        f' on {top["series"]}'
-        if top["series"]
-        else ""
-    )
+        context = (
+            f' on {point["series"]}'
+            if point["series"]
+            else ""
+        )
 
-    bullets.append(
-        f'{top["label"]} leads{top_context} at '
-        f'{format_chart_value(top["value"], title)}.'
-    )
+        if rank == 1:
 
-    if len(points) > 1:
+            bullets.append(
+                f'{point["label"]} leads{context} at '
+                f'{format_chart_value(point["value"], title)}.'
+            )
+
+        else:
+
+            bullets.append(
+                f'{point["label"]} ranks #{rank}{context} at '
+                f'{format_chart_value(point["value"], title)}.'
+            )
+
+    if len(points) > 4:
 
         lowest = points[-1]
 
@@ -854,29 +925,31 @@ def extract_chart_insights(chart_spec):
                     reverse=True
                 )
 
-                top = sorted_vals[0]
+                for rank, row in enumerate(sorted_vals[:5], start=1):
 
-                if len(sorted_vals) > 1:
+                    if rank == 1 and len(sorted_vals) > 1:
 
-                    second = sorted_vals[1]
+                        second = sorted_vals[1]
 
-                    gap = round(
-                        top["PCT"] - second["PCT"],
-                        1
-                    )
+                        gap = round(
+                            row["PCT"] - second["PCT"],
+                            1
+                        )
 
-                    bullets.append(
-                        f'{top["_label"]} leads at '
-                        f'{top["PCT"]:.1f}%, ahead of '
-                        f'{second["_label"]} by {gap} pp.'
-                    )
+                        bullets.append(
+                            f'{row["_label"]} leads at '
+                            f'{row["PCT"]:.1f}%, ahead of '
+                            f'{second["_label"]} by {gap} pp.'
+                        )
 
-                    bullets.append(
-                        f'{second["_label"]} ranks #2 at '
-                        f'{second["PCT"]:.1f}%.'
-                    )
+                    else:
 
-                if len(sorted_vals) >= 4:
+                        bullets.append(
+                            f'{row["_label"]} ranks #{rank} at '
+                            f'{row["PCT"]:.1f}%.'
+                        )
+
+                if len(sorted_vals) > 5:
 
                     lowest = sorted_vals[-1]
 
@@ -926,48 +999,45 @@ def extract_chart_insights(chart_spec):
                 for v in sorted_vals
             )
 
-            top = sorted_vals[0]
+            for rank, row in enumerate(sorted_vals[:5], start=1):
 
-            pct = round(
-                (top["RECORD_COUNT"] / total) * 100,
-                1
-            )
+                pct = round(
+                    (row["RECORD_COUNT"] / total) * 100,
+                    1
+                ) if total else 0
 
-            label = (
-                top.get("QID")
-                or top.get("QID_LABEL")
-                or "Top segment"
-            )
-
-            bullets.append(
-                f'{label} contributes the highest volume with '
-                f'{top["RECORD_COUNT"]:,} records '
-                f'(~{pct}% of total).'
-            )
-
-            if len(sorted_vals) > 1:
-
-                second = sorted_vals[1]
-
-                second_label = (
-                    second.get("QID")
-                    or second.get("QID_LABEL")
-                    or second.get("US_REGION")
-                    or "Second segment"
+                label = (
+                    row.get("QID")
+                    or row.get("QID_LABEL")
+                    or row.get("US_REGION")
+                    or row.get("ENTITY")
+                    or f"Segment {rank}"
                 )
 
-                bullets.append(
-                    f'{second_label} ranks #2 with '
-                    f'{second["RECORD_COUNT"]:,} records.'
-                )
+                if rank == 1:
 
-            if len(sorted_vals) >= 4:
+                    bullets.append(
+                        f'{label} contributes the highest volume with '
+                        f'{row["RECORD_COUNT"]:,} records '
+                        f'(~{pct}% of total).'
+                    )
+
+                else:
+
+                    bullets.append(
+                        f'{label} ranks #{rank} with '
+                        f'{row["RECORD_COUNT"]:,} records '
+                        f'(~{pct}% of total).'
+                    )
+
+            if len(sorted_vals) > 5:
 
                 lowest = sorted_vals[-1]
 
                 low_label = (
                     lowest.get("QID")
                     or lowest.get("QID_LABEL")
+                    or lowest.get("US_REGION")
                     or "Lowest segment"
                 )
 
@@ -999,7 +1069,7 @@ def extract_chart_insights(chart_spec):
 def extract_bullets(
     final_text: str,
     chart_spec=None,
-    top_n: int = 5
+    top_n=None
 ):
 
     text_without_tables = remove_markdown_tables(
@@ -1019,14 +1089,9 @@ def extract_bullets(
     if chart_spec:
 
         bullets.extend(
-            extract_chart_insights(chart_spec)
+            normalize_bullet(bullet)
+            for bullet in extract_chart_insights(chart_spec)
         )
-
-        if bullets:
-            return [
-                normalize_bullet(bullet)
-                for bullet in bullets[:top_n]
-            ]
 
     # =================================================
     # TEXT INSIGHTS
@@ -1055,6 +1120,9 @@ def extract_bullets(
         insight = normalize_bullet(insight)
 
         if len(insight) < 25:
+            continue
+
+        if not is_worthy_text_insight(insight):
             continue
 
         if is_duplicate(
@@ -1086,7 +1154,7 @@ def extract_bullets(
 
         final_bullets.append(bullet)
 
-        if len(final_bullets) >= top_n:
+        if top_n and len(final_bullets) >= top_n:
             break
 
     return final_bullets
@@ -1098,7 +1166,7 @@ def extract_bullets(
 
 def extract_bullets_from_response(
     response_data,
-    top_n: int = 5
+    top_n=None
 ):
 
     if isinstance(response_data, str):
@@ -1193,15 +1261,6 @@ def extract_bullets_from_response(
 
     all_bullets = []
 
-    # text bullets
-    all_bullets.extend(
-        extract_bullets(
-            final_text=final_text,
-            chart_spec=None,
-            top_n=top_n * 2
-        )
-    )
-
     # chart bullets
     for spec in chart_specs:
 
@@ -1209,17 +1268,32 @@ def extract_bullets_from_response(
             extract_chart_insights(spec)
         )
 
+    # text bullets
+    all_bullets.extend(
+        extract_bullets(
+            final_text=final_text,
+            chart_spec=None,
+            top_n=None
+        )
+    )
+
     # dedupe
     final = []
     if not all_bullets:
 
         sentences = split_sentences(final_text)
 
-        for s in sentences[:top_n]:
+        for s in sentences:
             s = normalize_bullet(s)
 
-            if len(s) > 20:
+            if (
+                len(s) > 20
+                and is_worthy_text_insight(s)
+            ):
                 final.append(s)
+
+            if top_n and len(final) >= top_n:
+                break
 
         return final
 
@@ -1232,7 +1306,7 @@ def extract_bullets_from_response(
 
         final.append(bullet)
 
-        if len(final) >= top_n:
+        if top_n and len(final) >= top_n:
             break
 
     return final

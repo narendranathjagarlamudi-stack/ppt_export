@@ -1,5 +1,7 @@
 import base64
+import hashlib
 import io
+import json
 import os
 import platform
 import re
@@ -10,21 +12,14 @@ import zipfile
 from pathlib import Path
 from typing import List
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import HTTPException
 from PIL import Image, ImageDraw, ImageFont
-from pydantic import BaseModel
 from pptx import Presentation
-from pptx.chart.data import CategoryChartData
-from pptx.dml.color import RGBColor
-from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
-from pptx.enum.shapes import PP_PLACEHOLDER
-from pptx.util import Inches, Pt
 
 
-BASE_DIR = Path(__file__).resolve().parents[1]
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+BASE_DIR = Path(__file__).resolve().parents[2]
+STATIC_DIR = BASE_DIR / "app" / "static" / "layout_picker"
+CACHE_DIR = STATIC_DIR / "preview_cache"
 TEMPLATE_PATH = BASE_DIR / "ppt template export" / "merkle_template.potx"
 
 POTX_CONTENT_TYPE = (
@@ -42,25 +37,6 @@ RENDERED_PREVIEW_CACHE = None
 RENDERED_PREVIEW_SOURCE = None
 LAST_RENDER_ERROR = None
 
-app = FastAPI(title="Template Layout POC")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
-class RenderSlideRequest(BaseModel):
-    layout_index: int
-    title: str = "Sample Insights"
-    bullets: List[str] = [
-        "Familiarity increased to 61%.",
-        "Consideration is strongest in the Midwest.",
-        "Usage is trailing awareness by 19 points.",
-    ]
-    chart_title: str = "Sample Chart"
-    categories: List[str] = ["Familiarity", "Consideration", "Usage"]
-    values: List[float] = [61, 42, 28]
-    include_chart: bool = True
-    selected_colors: List[str] = []
-
-
 def _clean_hex_color(value):
     color = str(value or "").strip()
 
@@ -77,6 +53,15 @@ def _clean_hex_color(value):
         return None
 
     return f"#{color.upper()}"
+
+
+def _is_black_or_white(color):
+    normalized = _clean_hex_color(color)
+
+    return normalized in {
+        "#000000",
+        "#FFFFFF",
+    }
 
 
 def _extract_template_palette():
@@ -116,6 +101,9 @@ def _extract_template_palette():
                     color = _clean_hex_color(match)
 
                     if not color:
+                        continue
+
+                    if _is_black_or_white(color):
                         continue
 
                     color_counts[color] = color_counts.get(color, 0) + 1
@@ -604,6 +592,86 @@ def _create_layout_preview_deck(prs):
     return temp_file.name
 
 
+def _preview_cache_key():
+
+    if not TEMPLATE_PATH.exists():
+        return None
+
+    stat = TEMPLATE_PATH.stat()
+    raw_key = (
+        f"{TEMPLATE_PATH.resolve()}|"
+        f"{stat.st_mtime_ns}|"
+        f"{stat.st_size}"
+    )
+
+    return hashlib.sha256(
+        raw_key.encode("utf-8")
+    ).hexdigest()[:24]
+
+
+def _load_preview_cache(layout_count):
+
+    cache_key = _preview_cache_key()
+
+    if not cache_key:
+        return None
+
+    cache_file = CACHE_DIR / f"{cache_key}.json"
+
+    if not cache_file.exists():
+        return None
+
+    try:
+        payload = json.loads(
+            cache_file.read_text(
+                encoding="utf-8"
+            )
+        )
+
+        previews = payload.get(
+            "previews"
+        )
+
+        if (
+            isinstance(previews, list)
+            and len(previews) == layout_count
+        ):
+            return payload
+
+    except Exception:
+        return None
+
+    return None
+
+
+def _save_preview_cache(mode, renderer, previews):
+
+    cache_key = _preview_cache_key()
+
+    if not cache_key or not previews:
+        return
+
+    try:
+        CACHE_DIR.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        cache_file = CACHE_DIR / f"{cache_key}.json"
+
+        cache_file.write_text(
+            json.dumps({
+                "mode": mode,
+                "renderer": renderer,
+                "previews": previews,
+            }),
+            encoding="utf-8"
+        )
+
+    except Exception:
+        return
+
+
 def _render_layout_previews_with_powerpoint(prs):
     global LAST_RENDER_ERROR
 
@@ -772,6 +840,20 @@ def _render_layout_previews(prs):
     ):
         return RENDERED_PREVIEW_CACHE
 
+    cached = _load_preview_cache(
+        len(prs.slide_layouts)
+    )
+
+    if cached:
+
+        RENDERED_PREVIEW_CACHE = {
+            "mode": cached.get("mode", "cached"),
+            "renderer": cached.get("renderer"),
+            "previews": cached.get("previews"),
+        }
+        RENDERED_PREVIEW_SOURCE = source_key
+        return RENDERED_PREVIEW_CACHE
+
     renderers = [
         (
             "powerpoint",
@@ -791,6 +873,12 @@ def _render_layout_previews(prs):
         )
 
         if previews:
+            _save_preview_cache(
+                mode,
+                renderer,
+                previews
+            )
+
             RENDERED_PREVIEW_CACHE = {
                 "mode": mode,
                 "renderer": renderer,
@@ -897,222 +985,93 @@ def _layout_metadata(prs, layout, index, rendered_preview=None):
             "height": int(placeholder.height),
         })
 
+    placeholder_kinds = {
+        item["kind"]
+        for item in placeholders
+    }
+
     return {
         "index": index,
         "name": layout.name,
         "placeholder_count": len(placeholders),
         "placeholders": placeholders,
+        "has_content_placeholder": (
+            "Content" in placeholder_kinds
+            or "Body" in placeholder_kinds
+        ),
         "preview": rendered_preview or _layout_preview_data_url(prs, layout),
         "preview_mode": "rendered" if rendered_preview else "schematic",
     }
 
 
-def _first_placeholder(slide, placeholder_types):
-    for shape in slide.placeholders:
-        try:
-            if shape.placeholder_format.type in placeholder_types:
-                return shape
-        except Exception:
-            continue
-    return None
+def _delete_preview_cache():
+    cache_key = _preview_cache_key()
 
-
-def _add_title(slide, title):
-    title_shape = _first_placeholder(slide, {PP_PLACEHOLDER.TITLE})
-
-    if title_shape:
-        title_shape.text = title
+    if not cache_key:
         return
 
-    box = slide.shapes.add_textbox(Inches(0.55), Inches(0.35), Inches(12.0), Inches(0.6))
-    paragraph = box.text_frame.paragraphs[0]
-    paragraph.text = title
-    paragraph.font.size = Pt(24)
-
-
-def _content_bounds(slide, prs):
-    content_shape = _first_placeholder(
-        slide,
-        {
-            PP_PLACEHOLDER.BODY,
-            PP_PLACEHOLDER.OBJECT,
-        },
-    )
-
-    if content_shape:
-        return content_shape.left, content_shape.top, content_shape.width, content_shape.height
-
-    return (
-        Inches(0.55),
-        Inches(1.15),
-        prs.slide_width - Inches(1.1),
-        prs.slide_height - Inches(1.7),
-    )
-
-
-def _add_bullets(slide, prs, bullets, has_chart):
-    left, top, width, height = _content_bounds(slide, prs)
-
-    if has_chart:
-        width = int(width * 0.36)
-
-    box = slide.shapes.add_textbox(left, top, width, height)
-    text_frame = box.text_frame
-    text_frame.clear()
-    text_frame.word_wrap = True
-
-    for index, bullet in enumerate(bullets):
-        paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
-        paragraph.text = f"- {bullet}"
-        paragraph.font.size = Pt(13)
-        paragraph.space_after = Pt(7)
-
-    return left, top, width, height
-
-
-def _add_chart(slide, prs, request, bullet_bounds):
-    left, top, width, height = _content_bounds(slide, prs)
-
-    chart_left = left
-    chart_top = top
-    chart_width = width
-    chart_height = height
-
-    if bullet_bounds:
-        bullet_left, bullet_top, bullet_width, bullet_height = bullet_bounds
-        chart_left = bullet_left + bullet_width + Inches(0.3)
-        chart_top = bullet_top
-        chart_width = prs.slide_width - chart_left - Inches(0.55)
-        chart_height = bullet_height
-
-    chart_data = CategoryChartData()
-    chart_data.categories = request.categories
-    chart_data.add_series("Sample", request.values)
-
-    chart = slide.shapes.add_chart(
-        XL_CHART_TYPE.COLUMN_CLUSTERED,
-        chart_left,
-        chart_top,
-        chart_width,
-        chart_height,
-        chart_data,
-    ).chart
-
-    chart.has_title = True
-    chart.chart_title.text_frame.text = request.chart_title
-    chart.has_legend = False
-
-    selected_colors = [
-        _clean_hex_color(color)
-        for color in request.selected_colors
-    ]
-    selected_colors = [
-        color
-        for color in selected_colors
-        if color
-    ]
-
-    if selected_colors:
-        try:
-            series = chart.series[0]
-
-            for index, point in enumerate(series.points):
-                color = selected_colors[index % len(selected_colors)][1:]
-                point.format.fill.solid()
-                point.format.fill.fore_color.rgb = RGBColor.from_string(
-                    color
-                )
-
-        except Exception:
-            pass
+    cache_file = CACHE_DIR / f"{cache_key}.json"
 
     try:
-        chart.category_axis.tick_labels.font.size = Pt(8)
-        chart.value_axis.tick_labels.font.size = Pt(8)
+        if cache_file.exists():
+            cache_file.unlink()
+
     except Exception:
-        pass
+        return
 
 
-@app.get("/", response_class=HTMLResponse)
-def index():
-    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+def get_layouts(template_path=None, force_refresh=False):
+    global TEMPLATE_PATH
+    global RENDERED_PREVIEW_CACHE
+    global RENDERED_PREVIEW_SOURCE
 
+    original_template_path = TEMPLATE_PATH
 
-@app.get("/api/layouts")
-def get_layouts():
-    prs = _load_template_presentation()
-    preview_result = _render_layout_previews(
-        prs
-    )
-    previews = preview_result.get(
-        "previews"
-    )
+    if template_path:
+        TEMPLATE_PATH = Path(template_path)
 
-    return {
-        "template": str(TEMPLATE_PATH),
-        "preview_mode": preview_result.get(
-            "mode"
-        ),
-        "renderer": preview_result.get(
-            "renderer"
-        ),
-        "renderer_error": preview_result.get(
-            "error"
-        ),
-        "palette": _extract_template_palette(),
-        "slide_width": int(prs.slide_width),
-        "slide_height": int(prs.slide_height),
-        "layouts": [
-            _layout_metadata(
-                prs,
-                layout,
-                index,
-                (
-                    previews[index]
-                    if previews
-                    else None
-                )
-            )
-            for index, layout in enumerate(prs.slide_layouts)
-        ],
-    }
+    try:
+        if force_refresh:
+            RENDERED_PREVIEW_CACHE = None
+            RENDERED_PREVIEW_SOURCE = None
+            _delete_preview_cache()
 
-
-@app.post("/api/render-slide")
-def render_slide(request: RenderSlideRequest):
-    prs = _load_template_presentation()
-
-    if request.layout_index < 0 or request.layout_index >= len(prs.slide_layouts):
-        raise HTTPException(status_code=400, detail="Invalid layout index")
-
-    if len(request.categories) != len(request.values):
-        raise HTTPException(
-            status_code=400,
-            detail="categories and values must have the same length",
+        prs = _load_template_presentation()
+        preview_result = _render_layout_previews(
+            prs
+        )
+        previews = preview_result.get(
+            "previews"
         )
 
-    slide = prs.slides.add_slide(prs.slide_layouts[request.layout_index])
+        return {
+            "template": str(TEMPLATE_PATH),
+            "preview_mode": preview_result.get(
+                "mode"
+            ),
+            "renderer": preview_result.get(
+                "renderer"
+            ),
+            "renderer_error": preview_result.get(
+                "error"
+            ),
+            "palette": _extract_template_palette(),
+            "slide_width": int(prs.slide_width),
+            "slide_height": int(prs.slide_height),
+            "layouts": [
+                _layout_metadata(
+                    prs,
+                    layout,
+                    index,
+                    (
+                        previews[index]
+                        if previews
+                        else None
+                    )
+                )
+                for index, layout in enumerate(prs.slide_layouts)
+            ],
+        }
 
-    _add_title(slide, request.title)
-
-    bullet_bounds = _add_bullets(
-        slide=slide,
-        prs=prs,
-        bullets=request.bullets,
-        has_chart=request.include_chart,
-    )
-
-    if request.include_chart:
-        _add_chart(slide, prs, request, bullet_bounds)
-
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
-    prs.save(temp_file.name)
-
-    return FileResponse(
-        temp_file.name,
-        media_type=(
-            "application/vnd.openxmlformats-"
-            "officedocument.presentationml.presentation"
-        ),
-        filename="layout_poc_render.pptx",
-    )
+    finally:
+        TEMPLATE_PATH = original_template_path

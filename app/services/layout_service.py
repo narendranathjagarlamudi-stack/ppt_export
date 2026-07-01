@@ -771,6 +771,23 @@ def _render_layout_previews_with_powerpoint(prs):
         except Exception:
             pass
 
+        try:
+            Path(deck_path).unlink(
+                missing_ok=True
+            )
+
+        except Exception:
+            pass
+
+        try:
+            shutil.rmtree(
+                output_dir,
+                ignore_errors=True
+            )
+
+        except Exception:
+            pass
+
 
 def _render_layout_previews_with_libreoffice(prs):
     global LAST_RENDER_ERROR
@@ -862,6 +879,33 @@ def _render_layout_previews_with_libreoffice(prs):
         detail = f": {stderr}" if stderr else ""
         LAST_RENDER_ERROR = f"LibreOffice renderer failed: {type(exc).__name__}: {exc}{detail}"
         return None
+
+    finally:
+        try:
+            Path(deck_path).unlink(
+                missing_ok=True
+            )
+
+        except Exception:
+            pass
+
+        try:
+            shutil.rmtree(
+                output_dir,
+                ignore_errors=True
+            )
+
+        except Exception:
+            pass
+
+        try:
+            shutil.rmtree(
+                profile_dir,
+                ignore_errors=True
+            )
+
+        except Exception:
+            pass
 
 
 def _render_pdf_pages_to_data_urls(pdf_path, prs):

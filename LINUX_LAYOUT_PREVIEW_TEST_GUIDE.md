@@ -147,6 +147,13 @@ pip install -r requirements.txt
 
 The `requirements.txt` file is plain text that works on Windows and Linux. It uses pip environment markers for OS-specific packages. For example, `PyMuPDF` is installed only on Linux because it provides the `fitz` package used to convert LibreOffice-rendered PDF pages into PNG thumbnails.
 
+If the virtual environment already existed before this Linux preview change, run the install command again after pulling the latest code:
+
+```bash
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
 You can verify the file encoding with:
 
 ```bash
@@ -334,7 +341,13 @@ Install:
 
 ```bash
 source venv/bin/activate
-pip install PyMuPDF==1.25.1
+pip install -r requirements.txt
+```
+
+This should install the Linux-only requirement from `requirements.txt`:
+
+```text
+PyMuPDF==1.25.1; platform_system == "Linux"
 ```
 
 ### API returns `preview_mode: schematic`
@@ -345,6 +358,25 @@ Likely causes:
 - `PyMuPDF` is not installed.
 - The template file is missing or invalid.
 - LibreOffice failed to convert the preview deck to PDF.
+
+If the response says:
+
+```text
+LibreOffice renderer failed: rendered fewer pages (0) than layouts (...)
+```
+
+check `fitz` first:
+
+```bash
+source venv/bin/activate
+python -c "import fitz; print('fitz ok')"
+```
+
+If that fails, rerun:
+
+```bash
+pip install -r requirements.txt
+```
 
 Check the API response:
 
